@@ -52,6 +52,11 @@ jobs:
               namespace = "com.deliverydecision"
               compileSdk = 36
 
+              compileOptions {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+              }
+             
               defaultConfig {
                   applicationId = "com.deliverydecision"
                   minSdk = 26
@@ -59,7 +64,11 @@ jobs:
                   versionCode = 1
                   versionName = "0.1"
               }
-          }
+            }
+
+            kotlin {
+              jvmToolchain(17)
+            }
           EOF
 
           cat > app/src/main/res/values/strings.xml <<'EOF'
