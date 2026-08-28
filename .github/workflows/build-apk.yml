@@ -12,8 +12,7 @@ jobs:
 
       - name: Unzip Android project
         run: |
-          unzip -o DeliveryDecision_v0.2_project.zip -d 
-          project
+          unzip -o DeliveryDecision_v0.2_project.zip -d project
            if [ -f delivery_decision_icon.png ]; then
            rm -f project/app/src/main/res/drawable/app_icon.xml
            cp delivery_decision_icon.png project/app/src/main/res/drawable/app_icon.png
