@@ -11,7 +11,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Unzip Android project
-        run: unzip -o DeliveryDecision_v0.2.1_project.zip -d project
+        run: unzip -o DeliveryDecision_v0.2.1_project_FIXED.zip -d project
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
