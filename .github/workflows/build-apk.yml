@@ -69,6 +69,7 @@ jobs:
             kotlin {
               jvmToolchain(17)
             }
+          
           EOF
 
           cat > app/src/main/res/values/strings.xml <<'EOF'
