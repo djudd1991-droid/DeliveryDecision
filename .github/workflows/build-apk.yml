@@ -1,1 +1,421 @@
+name: Build Delivery Decision v0.2
 
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create Android project
+        run: |
+          mkdir -p app/src/main/java/com/deliverydecision
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
+          mkdir -p app/src/main/res/drawable
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "DeliveryDecision"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.13.0" apply false
+              id("org.jetbrains.kotlin.android") version "2.2.20" apply false
+          }
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.deliverydecision"
+              compileSdk = 36
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              defaultConfig {
+                  applicationId = "com.deliverydecision"
+                  minSdk = 26
+                  targetSdk = 36
+                  versionCode = 2
+                  versionName = "0.2"
+              }
+          }
+
+          kotlin {
+              jvmToolchain(17)
+          }
+          EOF
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">Delivery Decision</string>
+              <string name="accessibility_description">Reads visible delivery offer text and shows TAKE, CONSIDER, or PASS without accepting or declining for you.</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowLightStatusBar">false</item>
+                  <item name="android:statusBarColor">#050805</item>
+                  <item name="android:navigationBarColor">#050805</item>
+                  <item name="android:colorAccent">#91FF00</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/xml/accessibility_service_config.xml <<'EOF'
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewTextChanged"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:canRetrieveWindowContent="true"
+              android:notificationTimeout="120"
+              android:description="@string/accessibility_description" />
+          EOF
+
+          # Use the custom icon if delivery_decision_icon.png was uploaded to the repo root.
+          if [ -f delivery_decision_icon.png ]; then
+            cp delivery_decision_icon.png app/src/main/res/drawable/app_icon.png
+          else
+            cat > app/src/main/res/drawable/app_icon.xml <<'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#91FF00" android:pathData="M12,8h84a8,8 0,0 1,8 8v76a8,8 0,0 1,-8 8H12a8,8 0,0 1,-8 -8V16a8,8 0,0 1,8 -8z"/>
+              <path android:fillColor="#111111" android:pathData="M21,28h28c18,0 28,10 28,26s-10,26 -28,26H21z"/>
+              <path android:fillColor="#FFFFFF" android:pathData="M28,35h18c11,0 17,7 17,19s-6,19 -17,19H28z"/>
+          </vector>
+          EOF
+          fi
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+              <application
+                  android:theme="@style/AppTheme"
+                  android:label="@string/app_name"
+                  android:allowBackup="false"
+                  android:icon="@drawable/app_icon">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:screenOrientation="portrait"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".MileageService"
+                      android:foregroundServiceType="location"
+                      android:exported="false" />
+
+                  <service
+                      android:name=".OfferReaderService"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                      android:exported="false"
+                      android:label="@string/app_name">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.accessibilityservice"
+                          android:resource="@xml/accessibility_service_config" />
+                  </service>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/deliverydecision/MainActivity.kt <<'EOF'
+          package com.deliverydecision
+
+          import android.Manifest
+          import android.app.Activity
+          import android.app.AlertDialog
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.graphics.*
+          import android.os.*
+          import android.provider.Settings
+          import android.view.Gravity
+          import android.view.View
+          import android.widget.*
+          import java.text.SimpleDateFormat
+          import java.util.*
+
+          class MoneyBackgroundView(context: Context) : View(context) {
+              private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val rng = Random(7)
+
+              override fun onDraw(canvas: Canvas) {
+                  super.onDraw(canvas)
+                  canvas.drawColor(Color.rgb(3, 8, 3))
+                  p.color = Color.argb(28, 145, 255, 0)
+                  p.textSize = 74f
+                  p.typeface = Typeface.DEFAULT_BOLD
+                  var y = 90f
+                  var row = 0
+                  while (y < height + 100) {
+                      var x = if (row % 2 == 0) -20f else 60f
+                      while (x < width + 100) {
+                          canvas.save()
+                          canvas.rotate(if (row % 2 == 0) -17f else 15f, x, y)
+                          canvas.drawText("$", x, y, p)
+                          canvas.restore()
+                          x += 170f
+                      }
+                      y += 150f
+                      row++
+                  }
+                  p.color = Color.argb(22, 145, 255, 0)
+                  for (i in 0..18) {
+                      val x = rng.nextInt(maxOf(width, 1)).toFloat()
+                      val yy = rng.nextInt(maxOf(height, 1)).toFloat()
+                      canvas.drawCircle(x, yy, 3f + rng.nextFloat() * 6f, p)
+                  }
+              }
+          }
+
+          class MainActivity : Activity() {
+              private val prefs by lazy { getSharedPreferences("dd", MODE_PRIVATE) }
+              private lateinit var mpg: EditText
+              private lateinit var gas: EditText
+              private lateinit var minDpm: EditText
+              private lateinit var preferredDpm: EditText
+              private lateinit var targetHour: EditText
+              private lateinit var mileageStatus: TextView
+              private lateinit var mileageNumbers: TextView
+              private val ui = Handler(Looper.getMainLooper())
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  buildUi()
+                  ui.post(refresh)
+              }
+
+              private val refresh = object : Runnable {
+                  override fun run() {
+                      val active = prefs.getBoolean("dash_active", false)
+                      val today = prefs.getFloat("today_miles", 0f).toDouble()
+                      val week = prefs.getFloat("week_miles", 0f).toDouble()
+                      val month = prefs.getFloat("month_miles", 0f).toDouble()
+                      val gasPrice = prefs.getFloat("gas", 3.99f).toDouble()
+                      val mpgVal = prefs.getFloat("mpg", 20f).toDouble().coerceAtLeast(1.0)
+                      val start = prefs.getLong("dash_start", 0L)
+                      val elapsed = if (active && start > 0) System.currentTimeMillis() - start else 0L
+                      mileageStatus.text = if (active) "● DASH ACTIVE   ${formatDuration(elapsed)}" else "○ DASH NOT ACTIVE"
+                      mileageStatus.setTextColor(if (active) Color.rgb(145,255,0) else Color.LTGRAY)
+                      mileageNumbers.text =
+                          "TODAY   ${fmt(today)} mi   •   Gas ~$${fmt2(today / mpgVal * gasPrice)}\n" +
+                          "THIS WEEK   ${fmt(week)} mi   •   THIS MONTH   ${fmt(month)} mi"
+                      ui.postDelayed(this, 1000)
+                  }
+              }
+
+              private fun buildUi() {
+                  val root = FrameLayout(this)
+                  root.addView(MoneyBackgroundView(this), FrameLayout.LayoutParams(-1, -1))
+
+                  val scroll = ScrollView(this).apply {
+                      isFillViewport = true
+                  }
+                  val main = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(30, 28, 30, 50)
+                  }
+                  scroll.addView(main)
+                  root.addView(scroll)
+                  setContentView(root)
+
+                  val header = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+
+                  val icon = ImageView(this).apply {
+                      setImageResource(com.deliverydecision.R.drawable.app_icon)
+                      scaleType = ImageView.ScaleType.CENTER_CROP
+                  }
+                  header.addView(icon, LinearLayout.LayoutParams(150, 150).apply { marginEnd = 22 })
+
+                  val hText = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  hText.addView(label("Delivery Decision v0.2", 27f, Color.WHITE, true))
+                  hText.addView(label("TAKE • CONSIDER • PASS", 17f, Color.rgb(145,255,0), true))
+                  header.addView(hText, LinearLayout.LayoutParams(0, -2, 1f))
+                  main.addView(header)
+                  spacer(main, 20)
+
+                  val ruleCard = card()
+                  ruleCard.addView(label("YOUR RULES", 22f, Color.rgb(145,255,0), true))
+                  mpg = settingRow(ruleCard, "MPG (Fuel Efficiency)", prefs.getFloat("mpg",20f).toString())
+                  gas = settingRow(ruleCard, "Gas Price ($/gal)", prefs.getFloat("gas",3.99f).toString())
+                  minDpm = settingRow(ruleCard, "Minimum $/mile", prefs.getFloat("min_dpm",1.50f).toString())
+                  preferredDpm = settingRow(ruleCard, "Preferred $/mile", prefs.getFloat("preferred_dpm",2.00f).toString())
+                  targetHour = settingRow(ruleCard, "Target $/hour", prefs.getFloat("target_hour",25f).toString())
+
+                  val save = neonButton("SAVE SETTINGS")
+                  save.setOnClickListener {
+                      prefs.edit()
+                          .putFloat("mpg", value(mpg,20f))
+                          .putFloat("gas", value(gas,3.99f))
+                          .putFloat("min_dpm", value(minDpm,1.5f))
+                          .putFloat("preferred_dpm", value(preferredDpm,2f))
+                          .putFloat("target_hour", value(targetHour,25f))
+                          .apply()
+                      Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show()
+                  }
+                  ruleCard.addView(save)
+                  main.addView(ruleCard)
+                  spacer(main, 18)
+
+                  val milesCard = card()
+                  milesCard.addView(label("MILEAGE TRACKER", 22f, Color.rgb(145,255,0), true))
+                  mileageStatus = label("", 16f, Color.LTGRAY, true)
+                  mileageNumbers = label("", 21f, Color.WHITE, true)
+                  milesCard.addView(mileageStatus)
+                  milesCard.addView(mileageNumbers)
+
+                  val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                  val start = neonButton("START DASH")
+                  val end = darkButton("END DASH")
+                  buttons.addView(start, LinearLayout.LayoutParams(0, 125, 1f).apply { marginEnd = 8 })
+                  buttons.addView(end, LinearLayout.LayoutParams(0, 125, 1f).apply { marginStart = 8 })
+                  milesCard.addView(buttons)
+
+                  val correct = darkButton("CORRECT TODAY'S MILES")
+                  correct.setOnClickListener { showMileageCorrection() }
+                  milesCard.addView(correct)
+
+                  milesCard.addView(label(
+                      "Forget to stop it? Auto-stop protection ends tracking after 90 minutes with no movement and no DoorDash/Uber offer activity. You can correct today's miles anytime.",
+                      14f, Color.LTGRAY, false
+                  ))
+
+                  start.setOnClickListener { startDash() }
+                  end.setOnClickListener {
+                      startService(Intent(this, MileageService::class.java).setAction("STOP"))
+                  }
+                  main.addView(milesCard)
+                  spacer(main, 18)
+
+                  val offerCard = card()
+                  offerCard.addView(label("OFFER READER", 22f, Color.rgb(145,255,0), true))
+                  offerCard.addView(label(
+                      "Reads the visible DoorDash or Uber Driver offer, then shows a stable overlay with payout, miles, $/mile, estimated fuel cost and TAKE / CONSIDER / PASS.",
+                      15f, Color.LTGRAY, false
+                  ))
+                  val enable = neonButton("ENABLE OFFER READER")
+                  enable.setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                  offerCard.addView(enable)
+                  main.addView(offerCard)
+              }
+
+              private fun startDash() {
+                  val needed = mutableListOf<String>()
+                  if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
+                      needed += Manifest.permission.ACCESS_FINE_LOCATION
+                  if (Build.VERSION.SDK_INT >= 33 &&
+                      checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                      needed += Manifest.permission.POST_NOTIFICATIONS
+
+                  if (needed.isNotEmpty()) {
+                      requestPermissions(needed.toTypedArray(), 88)
+                      Toast.makeText(this, "Allow location, then tap START DASH again.", Toast.LENGTH_LONG).show()
+                      return
+                  }
+                  startForegroundService(Intent(this, MileageService::class.java).setAction("START"))
+              }
+
+              private fun showMileageCorrection() {
+                  val input = EditText(this).apply {
+                      inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                      setText(fmt(prefs.getFloat("today_miles",0f).toDouble()))
+                      setSelectAllOnFocus(true)
+                  }
+                  AlertDialog.Builder(this)
+                      .setTitle("Correct today's miles")
+                      .setMessage("Enter the correct total delivery miles for today.")
+                      .setView(input)
+                      .setPositiveButton("SAVE") { _, _ ->
+                          val newMiles = input.text.toString().toFloatOrNull() ?: return@setPositiveButton
+                          val old = prefs.getFloat("today_miles",0f)
+                          val delta = newMiles - old
+                          prefs.edit()
+                              .putFloat("today_miles", newMiles.coerceAtLeast(0f))
+                              .putFloat("week_miles", (prefs.getFloat("week_miles",0f)+delta).coerceAtLeast(0f))
+                              .putFloat("month_miles", (prefs.getFloat("month_miles",0f)+delta).coerceAtLeast(0f))
+                              .apply()
+                      }
+                      .setNegativeButton("CANCEL", null)
+                      .show()
+              }
+
+              private fun card(): LinearLayout = LinearLayout(this).apply {
+                  orientation = LinearLayout.VERTICAL
+                  setPadding(24,22,24,22)
+                  background = android.graphics.drawable.GradientDrawable().apply {
+                      setColor(Color.argb(238, 5, 8, 5))
+                      setStroke(2, Color.rgb(145,255,0))
+                      cornerRadius = 30f
+                  }
+              }
+
+              private fun settingRow(parent: LinearLayout, title: String, initial: String): EditText {
+                  val row = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(0,14,0,14)
+                  }
+                  row.addView(label(title, 17f, Color.WHITE, true), LinearLayout.LayoutParams(0,-2,1f))
+                  val edit = EditText(this).apply {
+                      setText(initial)
+                      textSize = 18f
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.WHITE)
+                      inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                      background = android.graphics.drawable.GradientDrawable().apply {
+                          setColor(Color.rgb(8,10,8))
+                          setStroke(2, Color.rgb(145,255,0))
+                          cornerRadius = 20f
+                      }
+                  }
+                  row.addView(edit, LinearLayout.LayoutParams(190, 95))
+                  parent.addView
