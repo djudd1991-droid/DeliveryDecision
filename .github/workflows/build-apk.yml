@@ -14,7 +14,9 @@ jobs:
         run: |
           unzip -o DeliveryDecision_v0.2_project.zip -d project
           if [ -f delivery_decision_icon.png ]; then
-            cp delivery_decision_icon.png project/app/src/main/res/drawable/app_icon.png
+           rm -f project/app/src/main/res/drawable/
+           app_icon.xml
+           cp delivery_decision_icon.png project/app/src/main/res/drawable/app_icon.png
           fi
 
       - name: Set up Java 17
