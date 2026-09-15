@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Delivery Decision</string>
+    <string name="accessibility_description">Reads visible DoorDash delivery offer text and displays an advisory TAKE, CONSIDER, or PASS overlay. It never accepts or declines an offer for you.</string>
+</resources>
